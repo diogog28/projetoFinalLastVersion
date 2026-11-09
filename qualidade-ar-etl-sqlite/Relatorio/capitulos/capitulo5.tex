@@ -1,0 +1,386 @@
+\chapter{Tecnologias e Ferramentas Utilizadas}
+\label{sec:tecnologias}
+
+Para o desenvolvimento da plataforma de monitorização e análise
+da qualidade do ar em Beja, foi necessário selecionar um conjunto
+de tecnologias que permitisse implementar as diferentes
+funcionalidades do sistema, desde a recolha e tratamento dos dados
+até ao seu armazenamento e posterior visualização.
+
+A escolha das tecnologias teve em consideração os requisitos
+funcionais da aplicação, a facilidade de integração entre os
+diferentes componentes, a possibilidade de manutenção e a
+adequação das ferramentas aos conhecimentos adquiridos ao longo
+da licenciatura em Engenharia Informática.
+
+A arquitetura adotada divide-se em três componentes principais:
+o \textit{backend}, responsável pelo tratamento dos dados e
+pela disponibilização da API REST; a base de dados, destinada
+ao armazenamento estruturado das leituras; e o
+\textit{frontend}, responsável pela apresentação e interação
+com o utilizador.
+
+
+\subsection{Linguagens de Programação e Bibliotecas}
+\label{subsec:linguagens}
+
+O desenvolvimento da aplicação envolveu a utilização de
+diferentes linguagens de programação, frameworks e bibliotecas,
+cada uma com responsabilidades específicas na arquitetura
+do sistema.
+
+
+\subsubsection{Python}
+
+A linguagem Python foi utilizada no desenvolvimento do
+\textit{backend}, nomeadamente na implementação do processo
+ETL (\textit{Extract, Transform, Load}) e na gestão das
+operações relacionadas com os dados ambientais.
+
+A escolha desta linguagem deveu-se à sua sintaxe relativamente
+simples, facilidade de manutenção e disponibilidade de
+bibliotecas adequadas ao processamento de dados.
+
+No processo ETL, foram utilizadas diferentes bibliotecas
+da linguagem Python, destacando-se:
+
+\begin{itemize}
+
+    \item \textbf{csv}: responsável pela leitura dos ficheiros
+    CSV e interpretação dos respetivos campos;
+
+    \item \textbf{io}: utilizada para manipular o conteúdo
+    dos ficheiros em memória;
+
+    \item \textbf{datetime}: utilizada para interpretar,
+    converter e validar os campos temporais;
+
+    \item \textbf{zoneinfo}: responsável pela conversão
+    dos timestamps para o fuso horário
+    \texttt{Europe/Lisbon};
+
+    \item \textbf{math}: utilizada na validação dos valores
+    numéricos, nomeadamente para identificar valores
+    não finitos;
+
+    \item \textbf{sqlite3}: utilizada para estabelecer
+    a comunicação entre Python e a base de dados SQLite.
+
+\end{itemize}
+
+Estas bibliotecas permitiram desenvolver um processo ETL
+capaz de interpretar os ficheiros disponibilizados,
+normalizar os atributos, validar a consistência das
+leituras e preparar os dados para armazenamento.
+
+
+\subsubsection{Flask}
+
+Para implementar a comunicação entre o
+\textit{frontend} e o \textit{backend}, foi utilizado
+o framework Flask, desenvolvido para a linguagem Python.
+
+O Flask permite criar aplicações web e disponibilizar
+serviços através de uma API REST
+(\textit{Representational State Transfer}).
+
+No contexto deste projeto, a API permite consultar
+os sensores existentes, obter leituras ambientais,
+importar ficheiros CSV e eliminar dados armazenados.
+
+Foram implementados os seguintes endpoints:
+
+\begin{itemize}
+
+    \item \texttt{GET /api/sensores}:
+    devolve a lista de sensores registados;
+
+    \item \texttt{GET /api/leituras}:
+    permite consultar as leituras armazenadas,
+    podendo filtrar os resultados por sensor;
+
+    \item \texttt{POST /api/upload}:
+    recebe ficheiros CSV, executa o processamento
+    ETL e armazena os dados válidos;
+
+    \item \texttt{DELETE /api/dados}:
+    permite eliminar os dados registados
+    na base de dados.
+
+\end{itemize}
+
+A comunicação entre os componentes é realizada
+através de pedidos HTTP, sendo os resultados
+disponibilizados em formato JSON
+(\textit{JavaScript Object Notation}).
+
+Foi também utilizada a biblioteca
+\texttt{Flask-CORS}, permitindo configurar
+as permissões de comunicação entre o servidor
+Flask e o ambiente de desenvolvimento do Vue.js.
+
+
+\subsubsection{Vue.js}
+
+Para o desenvolvimento da interface web, foi utilizado
+o framework JavaScript Vue.js, na sua terceira versão.
+
+A escolha do Vue.js teve como principal objetivo
+desenvolver uma interface interativa e organizada,
+permitindo apresentar os dados ambientais de forma
+dinâmica.
+
+O Vue.js disponibiliza uma arquitetura baseada
+em componentes, facilitando a separação das
+responsabilidades e a reutilização de elementos
+da interface.
+
+A aplicação encontra-se organizada em diferentes
+componentes, nomeadamente:
+
+\begin{itemize}
+
+    \item \textbf{TopHeader.vue}:
+    apresenta o cabeçalho, permite selecionar
+    sensores e importar ficheiros CSV;
+
+    \item \textbf{TimeSlider.vue}:
+    permite navegar temporalmente entre os
+    diferentes registos;
+
+    \item \textbf{AqiGaugeCard.vue}:
+    apresenta visualmente o índice de qualidade
+    do ar;
+
+    \item \textbf{AqiMap.vue}:
+    apresenta a localização geográfica dos
+    sensores;
+
+    \item \textbf{AqiEvolutionChart.vue}:
+    permite visualizar a evolução histórica
+    das concentrações dos poluentes;
+
+    \item \textbf{PollutantList.vue}:
+    apresenta as concentrações dos poluentes
+    e os respetivos valores de referência.
+
+\end{itemize}
+
+A organização por componentes permite
+desenvolver e modificar funcionalidades
+específicas sem alterar diretamente
+toda a estrutura da aplicação.
+
+O ficheiro \texttt{App.vue} funciona como
+componente principal, sendo responsável pela
+gestão do estado da aplicação e pela
+comunicação entre os diferentes componentes.
+
+
+\subsubsection{Bibliotecas de Visualização e Comunicação}
+
+Para complementar as funcionalidades do Vue.js,
+foram utilizadas bibliotecas JavaScript específicas.
+
+A biblioteca \textbf{Chart.js}, integrada através
+de \texttt{vue-chartjs}, foi utilizada para
+representar graficamente a evolução histórica
+das concentrações de poluentes atmosféricos.
+
+A utilização de gráficos de linhas permite
+observar variações temporais e identificar
+períodos com concentrações mais elevadas.
+
+Para a representação geográfica dos sensores,
+foi utilizada a biblioteca \textbf{Leaflet},
+que permite integrar mapas interativos
+na aplicação web.
+
+Os sensores são representados através de
+marcadores geográficos, cuja cor varia
+de acordo com a classificação do índice
+de qualidade do ar calculado pela aplicação.
+
+Para a comunicação entre o Vue.js e a API REST
+Flask, foi utilizada a biblioteca \textbf{Axios},
+responsável pela realização de pedidos HTTP
+e pelo processamento das respostas recebidas.
+
+Por último, a biblioteca \textbf{Bootstrap}
+foi utilizada para apoiar a organização visual
+da interface, disponibilizando classes e
+componentes que facilitam a construção
+de um layout responsivo.
+
+
+\subsection{Sistema de Gestão da Base de Dados}
+\label{subsec:sqlite}
+
+Para o armazenamento dos dados ambientais,
+foi selecionado o sistema de gestão de base
+de dados relacional SQLite.
+
+O SQLite permite criar e gerir uma base de
+dados através de um ficheiro local, não
+exigindo a instalação ou configuração de
+um servidor de base de dados independente.
+
+Esta característica revelou-se adequada
+ao contexto do projeto, uma vez que
+simplifica a configuração do ambiente
+de desenvolvimento e permite gerir
+os dados de forma estruturada.
+
+A base de dados foi organizada em três
+tabelas principais:
+
+\begin{itemize}
+
+    \item \textbf{sensores}:
+    armazena os identificadores dos sensores,
+    nomes, coordenadas geográficas
+    e respetivos metadados;
+
+    \item \textbf{ficheiros}:
+    regista os ficheiros CSV importados
+    e identifica os sensores aos quais
+    estão associados;
+
+    \item \textbf{leituras}:
+    armazena os registos ambientais,
+    incluindo os timestamps, concentrações
+    de poluentes, variáveis meteorológicas
+    e coordenadas.
+
+\end{itemize}
+
+A utilização de chaves primárias e
+estrangeiras permite estabelecer relações
+entre as tabelas, assegurando a integridade
+referencial dos dados.
+
+Adicionalmente, foram definidas restrições
+de unicidade e índices para facilitar
+a organização e consulta das leituras.
+
+A comunicação com o SQLite é realizada
+através da biblioteca \texttt{sqlite3},
+integrada na biblioteca padrão do Python.
+
+O ficheiro \texttt{database.py} é responsável
+pela criação da estrutura relacional,
+estabelecimento das ligações e execução
+das consultas necessárias ao funcionamento
+da aplicação.
+
+
+\subsection{Ambiente de Desenvolvimento e Controlo de Versões}
+\label{subsec:ambiente}
+
+O desenvolvimento do projeto foi realizado
+no Visual Studio Code, um editor de código
+que disponibiliza funcionalidades de apoio
+ao desenvolvimento de aplicações em
+diferentes linguagens de programação.
+
+A sua utilização permitiu trabalhar com
+os ficheiros Python, JavaScript, Vue.js,
+HTML e CSS num único ambiente.
+
+O Visual Studio Code disponibiliza ainda
+um terminal integrado, utilizado para
+executar os comandos necessários à
+instalação de dependências, inicialização
+do servidor Flask e execução da
+aplicação Vue.js.
+
+No desenvolvimento do \textit{frontend},
+foi utilizada a ferramenta \textbf{Vite},
+responsável pela disponibilização
+do servidor de desenvolvimento e pela
+compilação da aplicação Vue.js.
+
+A gestão das dependências JavaScript foi
+realizada através do \textbf{npm}
+(\textit{Node Package Manager}), enquanto
+as dependências Python foram instaladas
+através do \textbf{pip}.
+
+Para isolar as dependências do ambiente
+Python, foi utilizado um ambiente virtual,
+permitindo separar as bibliotecas do
+projeto das restantes instalações
+existentes no sistema.
+
+Relativamente ao controlo de versões,
+o Git constitui uma ferramenta adequada
+para acompanhar a evolução do código,
+registar alterações e facilitar a
+recuperação de versões anteriores.
+
+A utilização de um repositório GitHub
+permite ainda centralizar o código-fonte
+e manter um histórico do desenvolvimento,
+caso seja adotado como plataforma de
+alojamento do repositório.
+
+
+\subsection{Justificação das Escolhas Tecnológicas}
+\label{subsec:justificacao}
+
+A seleção das tecnologias procurou
+estabelecer um equilíbrio entre
+facilidade de desenvolvimento,
+organização do código, capacidade
+de processamento e manutenção futura.
+
+A utilização de Python permitiu
+implementar o processo ETL através
+de bibliotecas adequadas à leitura,
+normalização e validação dos dados.
+
+O framework Flask foi selecionado
+pela sua simplicidade e facilidade
+de integração com Python, permitindo
+disponibilizar uma API REST sem
+introduzir complexidade desnecessária
+na arquitetura do sistema.
+
+A utilização de SQLite revelou-se
+adequada para a dimensão e os
+objetivos iniciais do projeto,
+permitindo armazenar os dados
+de forma relacional e garantir
+a consistência das relações
+entre sensores, ficheiros e leituras.
+
+No desenvolvimento do frontend,
+o Vue.js permitiu construir uma
+interface modular e reativa,
+facilitando a atualização automática
+dos elementos visuais quando
+o utilizador seleciona diferentes
+sensores ou períodos temporais.
+
+Por sua vez, a integração de
+Chart.js e Leaflet permitiu
+representar os dados de forma
+gráfica e geográfica, contribuindo
+para uma interpretação mais
+acessível da informação ambiental.
+
+A separação entre frontend,
+backend e base de dados contribui
+para uma arquitetura mais organizada,
+em que cada componente apresenta
+responsabilidades específicas.
+
+Esta abordagem facilita a manutenção
+da aplicação e permite considerar
+futuras evoluções, como a integração
+de novas fontes de dados,
+a implementação de funcionalidades
+de análise adicionais ou a
+substituição do sistema de
+armazenamento, caso os requisitos
+venham a justificar essa alteração.

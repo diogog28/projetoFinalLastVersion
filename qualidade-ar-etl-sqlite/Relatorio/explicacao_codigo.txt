@@ -1,0 +1,614 @@
+DESCRIÇÃO COMENTADA DO CÓDIGO DA PLATAFORMA DE QUALIDADE DO AR
+==========================================================
+
+Finalidade e âmbito
+------------------
+Este documento descreve a implementação existente da plataforma web de
+consulta e análise de dados históricos da qualidade do ar em Beja. Os caminhos
+indicados são relativos à pasta do projeto que contém src/ e backend/.
+
+A descrição resulta da leitura do código. Não constitui um relatório de testes
+executados nem uma avaliação de desempenho ou usabilidade. Os comentários
+assinalados como «Comentário explicativo» foram acrescentados apenas neste
+documento; os ficheiros da aplicação não foram modificados. Os excertos são
+segmentos do código real, pelo que não constituem programas autónomos.
+
+O sistema recebe ficheiros CSV, trata as leituras em Python, guarda-as em
+SQLite e disponibiliza-as através de Flask. A interface Vue consulta a API e
+apresenta os dados em cartões, gráficos e mapas. A consulta depende dos dados
+previamente importados: não existe recolha direta dos sensores em tempo real.
+
+
+1. FRONTEND
+===========
+
+1.1. Inicialização da aplicação e apresentação visual
+---------------------------------------------------
+Ficheiro: src/main.js
+
+    import { createApp } from 'vue'
+    import 'bootstrap/dist/css/bootstrap.min.css'
+    import 'bootstrap-icons/font/bootstrap-icons.css'
+    import App from './App.vue'
+    createApp(App).mount('#app')
+
+Comentário explicativo:
+createApp cria a aplicação Vue e mount associa-a ao elemento HTML com o
+identificador app. App.vue é o componente principal. Os imports de Bootstrap
+e Bootstrap Icons disponibilizam estilos e ícones; não demonstram, por si só,
+a utilização de todos os componentes JavaScript do Bootstrap.
+
+A configuração em vite.config.js ativa o plugin Vue. O package.json define
+o comando de desenvolvimento que inicia Vite e Flask através de concurrently.
+A construção do frontend utiliza o comando vite build.
+
+1.2. Estado central e atualização reativa
+---------------------------------------
+Ficheiro: src/App.vue
+
+    const leituras = ref([])
+    const sensores = ref([])
+    const sensorSelecionado = ref('todos')
+    const indiceAtivo = ref(0)
+    const poluenteSelecionado = ref('PM2P5')
+    const erro = ref('')
+    const sucesso = ref('')
+
+Comentário explicativo:
+ref cria valores reativos. As leituras e os sensores recebidos da API ficam
+guardados no estado do componente principal. O sensor selecionado, o índice
+temporal e o poluente determinam os dados apresentados. As variáveis erro e
+sucesso suportam mensagens de retorno ao utilizador.
+
+    const leiturasFiltradas = computed(() => sensorSelecionado.value === 'todos'
+      ? leituras.value : leituras.value.filter(l => Number(l.sensor_id) === Number(sensorSelecionado.value)))
+    const leituraAtual = computed(() => leiturasFiltradas.value[indiceAtivo.value] || {})
+    watch(sensorSelecionado, () => { indiceAtivo.value = 0 })
+
+Comentário explicativo:
+computed calcula valores derivados do estado e acompanha as suas dependências.
+O filtro seleciona as leituras de um sensor, ou conserva todas. leituraAtual
+obtém o registo na posição escolhida. Ao mudar de sensor, watch repõe a posição
+inicial para evitar conservar um índice correspondente a outra série.
+
+A filtragem usada pela interface é local: o carregamento inicial pede todas
+as leituras, apesar de a API também permitir filtrar por sensor.
+
+1.3. Componentes e comunicação interna
+-------------------------------------
+Ficheiro: src/App.vue
+
+    <TopHeader v-model="sensorSelecionado" :sensores="sensores" @upload="uploadFicheiro" />
+
+Comentário explicativo:
+sensores é passado ao componente filho como propriedade. v-model liga a seleção
+ao estado do componente principal. O evento upload desencadeia a importação.
+Esta organização separa a apresentação da coordenação das operações.
+
+Ficheiro: src/components/TopHeader.vue
+
+    defineProps({ sensores: { type: Array, default: () => [] }, modelValue: { type: [String, Number], default: 'todos' } })
+    defineEmits(['update:modelValue', 'upload'])
+
+Comentário explicativo:
+defineProps declara os dados recebidos e defineEmits os eventos emitidos.
+TopHeader apresenta a seleção de sensores e um input que aceita vários CSV.
+
+Outros componentes existentes:
+- TimeSlider.vue: navegação por índice, botões anterior/seguinte e uma pequena
+  representação SVG dos valores de PM2,5. Não implementa um filtro entre duas datas.
+- WeatherMetrics.vue: temperatura, humidade, velocidade do vento e pressão.
+- WeatherDetails.vue: rajada, direção do vento, identificador e data do registo.
+- AqiGaugeCard.vue: indicador SVG do AQI demonstrativo ou mensagem de indisponibilidade.
+- PollutantList.vue: concentrações e proporções face a referências ilustrativas.
+- AqiEvolutionChart.vue: gráfico histórico do poluente selecionado.
+- AqiMap.vue: mapa com marcadores dos sensores e cores associadas ao AQI.
+
+1.4. Preparação dos dados para o gráfico
+--------------------------------------
+Ficheiro: src/App.vue
+
+    const dadosGrafico = computed(() => leiturasFiltradas.value.map(l => ({
+      x: l.data, y: l[poluenteSelecionado.value]
+    })))
+
+Comentário explicativo:
+Cada leitura é convertida num ponto composto por data e concentração.
+O acesso l[poluenteSelecionado.value] permite reutilizar o gráfico para os
+poluentes previstos na seleção, sem criar um componente por poluente.
+
+Ficheiro: src/components/AqiEvolutionChart.vue
+
+    import { Line } from 'vue-chartjs'
+
+    import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler } from 'chart.js'
+    ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
+
+Comentário explicativo:
+vue-chartjs integra o gráfico de linhas no Vue. O registo dos elementos ativa
+as funcionalidades Chart.js utilizadas. O gráfico usa uma escala categórica
+para as datas; a distância entre pontos não representa necessariamente a duração
+real entre medições. Com todos os sensores selecionados, as leituras integram
+uma única série, sem séries separadas por sensor.
+
+1.5. Mapa interativo
+-------------------
+Ficheiro: src/components/AqiMap.vue
+
+    const conteudo = document.createElement('div')
+    conteudo.textContent = `${sensor.id} · AQI: ${sensor.aqi ?? 'N/D'}`
+    L.circleMarker([sensor.lat, sensor.lng], { radius: 12, color: '#fff', weight: 2, fillColor: cor(sensor.aqi), fillOpacity: .85 })
+      .bindPopup(conteudo).addTo(camada)
+
+Comentário explicativo:
+Leaflet cria um marcador circular para cada sensor com coordenadas válidas.
+A função cor associa uma cor ao índice recebido. textContent apresenta o texto
+do popup sem o interpretar como HTML. Os mosaicos cartográficos são obtidos do
+OpenStreetMap, pelo que a apresentação do mapa base depende desse serviço externo.
+
+Em App.vue, os dados do mapa usam, para cada sensor, a leitura mais recente até
+ao instante selecionado e as últimas coordenadas válidas disponíveis nessa série.
+Assim, os marcadores podem corresponder a registos de instantes diferentes;
+não representam necessariamente medições simultâneas.
+
+1.6. Cálculo do AQI demonstrativo
+--------------------------------
+Ficheiro: src/services/aqi.js
+
+    for (const intervalo of intervalos) {
+      const de = Math.max(intervalo.inicio, inicio)
+      const ate = Math.min(intervalo.fim, fim)
+
+      // Se existir uma lacuna ou sobreposição, não calcula.
+      if (de !== cursor || ate <= de) {
+        return null
+      }
+
+      // A concentração é ponderada pela duração.
+      somaPonderada += intervalo.valor * (ate - de)
+      cursor = ate
+    }
+
+    // Só calcula se as 24 horas estiverem completas.
+    if (cursor !== fim) return null
+
+    const media24h = somaPonderada / (fim - inicio)
+
+    return calcularAqiPm25(media24h)
+
+Comentário explicativo:
+calcularAqiIntervalo seleciona os intervalos válidos do sensor que intersectam
+as 24 horas anteriores ao fim da leitura de referência. O ciclo limita cada
+intervalo à janela, verifica continuidade e acumula concentração vezes duração.
+O cálculo assume que cada valor representa a média do respetivo intervalo.
+Não basta contar 24 linhas; a cobertura temporal tem de estar completa.
+
+Depois de obter a média, calcularAqiPm25 trunca-a a uma casa decimal, procura
+uma faixa e interpola o índice:
+
+    const [cMin, cMax, iMin, iMax] = faixa
+
+    // Interpolação linear para calcular o índice.
+    return Math.round(
+      ((iMax - iMin) / (cMax - cMin)) *
+      (c - cMin) + iMin
+    )
+
+Comentário explicativo:
+O resultado é um índice sem unidade. As faixas são demonstrativas no código;
+este cálculo não deve ser apresentado como índice oficial português nem como
+avaliação de conformidade legal. A origem e validação das faixas devem ser
+documentadas: \textbf{[INFORMAÇÃO A COMPLETAR]}.
+
+App.vue mantém a função aqiNoInstante, sem chamadas identificadas, que referencia
+calcularAqiPm25 sem o importar. O percurso ativo do indicador e do mapa utiliza
+calcularAqiIntervalo; a função antiga não deve ser descrita como funcionalidade ativa.
+
+
+2. BACKEND
+==========
+
+2.1. Aplicação Flask e separação de responsabilidades
+---------------------------------------------------
+Ficheiro: backend/app.py
+
+    from database import ligar, inicializar, listar_leituras
+    from csv_parser import extrair_transformar, CAMPOS
+
+    from flask import Flask, request, jsonify
+    from flask_cors import CORS
+
+    app = Flask(__name__)
+
+Comentário explicativo:
+Flask associa pedidos HTTP às funções Python. request permite aceder aos
+parâmetros e ficheiros recebidos; jsonify serializa os resultados para JSON.
+O parser concentra a transformação, database.py concentra o acesso relacional
+e app.py coordena os pedidos e a inserção. A carga do ETL está implementada em
+app.py, pelo que esta separação é modular, mas não corresponde a uma camada
+de serviços totalmente independente das rotas.
+
+inicializar() é chamada quando o módulo é carregado. Cria o esquema necessário
+e recusa determinados esquemas antigos incompatíveis. Importar app.py pode,
+portanto, provocar acesso à base de dados.
+
+2.2. Consulta das leituras
+-------------------------
+Ficheiro: backend/app.py
+
+    @app.get('/api/leituras')
+    def leituras():
+        argumento = request.args.get('sensor', 'todos')
+        if argumento != 'todos' and not argumento.isdecimal():
+            return jsonify({'erro': 'sensor_id deve ser um número inteiro'}), 400
+        with ligar() as db:
+            resultado = listar_leituras(db, None if argumento == 'todos' else int(argumento))
+        return jsonify(resultado)
+
+Comentário explicativo:
+O decorador regista a rota GET. O parâmetro sensor é opcional e assume todos.
+Um valor que não seja todos nem uma representação decimal recebe HTTP 400.
+A consulta delega a construção SQL a listar_leituras. Não existe nesta rota
+paginação nem filtragem por datas; todos os registos correspondentes são devolvidos.
+
+Ficheiro: backend/database.py
+
+    if sensor is not None:
+        sql += ' WHERE l.sensor_id = ?'
+        parametros.append(sensor)
+    sql += ' ORDER BY l.timestamp_init_UTC, l.reading_id'
+    return [dict(r) for r in db.execute(sql, parametros)]
+
+Comentário explicativo:
+O marcador ? separa o valor do parâmetro da estrutura SQL. A ordenação utiliza
+o início UTC e o identificador da leitura. A consulta também devolve os aliases
+data, lat e lng, usados pelos componentes existentes, sem duplicar essas colunas
+na tabela física.
+
+2.3. Ligações e integridade relacional
+-------------------------------------
+Ficheiro: backend/database.py
+
+    def ligar():
+        conexao = sqlite3.connect(DB_PATH)
+        conexao.row_factory = sqlite3.Row
+        conexao.execute('PRAGMA foreign_keys = ON')
+        return conexao
+
+Comentário explicativo:
+DB_PATH aponta para qualidade_ar.db junto de database.py. sqlite3.Row permite
+aceder às colunas pelo nome. A ativação das chaves estrangeiras em cada ligação
+faz com que o SQLite aplique as relações declaradas.
+
+O modelo contém:
+- sensores: identificação, nome, coordenadas e metadados;
+- ficheiros: nome único, sensor associado e data de importação;
+- leituras: sensor, ficheiro de origem, quatro marcas temporais e quinze campos
+  numéricos, incluindo treze medições e duas coordenadas.
+
+Excerto das restrições da tabela leituras:
+
+    FOREIGN KEY(sensor_id) REFERENCES sensores(sensor_id),
+    FOREIGN KEY(ficheiro_id) REFERENCES ficheiros(id) ON DELETE CASCADE,
+    CHECK(timestamp_end_UTC > timestamp_init_UTC),
+    UNIQUE(sensor_id, timestamp_init_UTC, timestamp_end_UTC)
+
+Comentário explicativo:
+As chaves estrangeiras relacionam leituras com sensores e ficheiros existentes.
+CHECK exige fim posterior ao início na representação temporal normalizada.
+UNIQUE impede repetir exatamente o mesmo intervalo para o mesmo sensor.
+Não impede, por si só, intervalos diferentes que se sobreponham.
+
+    CREATE INDEX IF NOT EXISTS idx_leituras_sensor_tempo
+        ON leituras(sensor_id, timestamp_init_UTC);
+
+Comentário explicativo:
+O índice foi definido para apoiar consultas por sensor e tempo. A sua existência
+não comprova uma melhoria de desempenho medida; não foram executadas medições
+para este documento.
+
+2.4. Eliminação global e ambiente de execução
+--------------------------------------------
+Ficheiro: backend/app.py
+
+    @app.delete('/api/dados')
+    def limpar():
+        with ligar() as db:
+            db.execute('DELETE FROM leituras')
+            db.execute('DELETE FROM ficheiros')
+            db.execute('DELETE FROM sensores')
+        return jsonify({'mensagem': 'Dados eliminados.'})
+
+Comentário explicativo:
+A eliminação começa pelas leituras e termina pelos sensores, respeitando as
+dependências. A operação abrange todos os dados destas tabelas. O frontend pede
+confirmação com window.confirm, mas essa confirmação não é um controlo de acesso
+do servidor. Não existe autenticação implementada nas rotas analisadas.
+
+O arranque direto usa app.run(port=5000, debug=True), uma configuração de
+desenvolvimento. Não deve ser descrito como uma implantação de produção validada.
+
+
+3. COMUNICAÇÕES
+===============
+
+3.1. Serviço Axios e contrato HTTP
+---------------------------------
+Ficheiro: src/services/airService.js
+
+    const api = axios.create({ baseURL: 'http://localhost:5000/api' })
+    export const airService = {
+      async getSensores() { return (await api.get('/sensores')).data },
+      async getLeituras(sensor = 'todos') { return (await api.get('/leituras', { params: { sensor } })).data },
+      async uploadCSV(files) {
+        const form = new FormData()
+        for (const file of files) form.append('ficheiros', file)
+        return (await api.post('/upload', form)).data // Axios define o boundary automaticamente.
+      },
+      async limparDados() { return (await api.delete('/dados')).data }
+    }
+
+Comentário explicativo:
+O serviço centraliza os endereços e pedidos, evitando distribuir chamadas HTTP
+pelos componentes visuais. async/await permite aguardar as respostas sem bloquear
+a interação do navegador. response.data contém o corpo devolvido pela API.
+
+Contrato identificado:
+- GET /api/sensores: lista os sensores;
+- GET /api/leituras? sensor=...: consulta leituras; o endereço real não contém
+  espaço entre ? e sensor, sendo os parâmetros construídos pelo Axios;
+- POST /api/upload: recebe ficheiros num formulário multipart;
+- DELETE /api/dados: elimina os dados importados.
+
+O upload utiliza multipart/form-data, não um corpo JSON. O nome ficheiros tem
+de coincidir com request.files.getlist('ficheiros') no Flask. As respostas das
+rotas são JSON. O boundary separa as partes do formulário e é definido pelo
+navegador/Axios no envio de FormData.
+
+A baseURL é fixa e local. A configuração de um endereço de produção ou de
+ambientes distintos constitui uma evolução possível, não implementada aqui.
+
+3.2. Carregamento inicial e sincronização após importação
+--------------------------------------------------------
+Ficheiro: src/App.vue
+
+    async function carregarDados() {
+      try {
+        ;[sensores.value, leituras.value] = await Promise.all([airService.getSensores(), airService.getLeituras()])
+      } catch { erro.value = 'Não foi possível contactar o servidor Flask.' }
+    }
+    onMounted(carregarDados)
+
+Comentário explicativo:
+onMounted inicia o carregamento quando o componente é montado. Promise.all
+aguarda os pedidos independentes de sensores e leituras. Após importar ou
+eliminar dados, a interface volta a consultar a API, refletindo o estado guardado.
+Não existe atualização periódica, WebSocket ou subscrição de eventos dos sensores.
+
+Excerto da apresentação do resultado de upload:
+
+    sucesso.value = `${r.importados.length} ficheiro(s) importado(s).`
+    if (r.erros.length || r.ignorados.length) erro.value = [...r.erros, ...r.ignorados.map(n => `${n}: já importado`)].join('; ')
+
+Comentário explicativo:
+A interface apresenta a quantidade de ficheiros importados e mensagens de erros
+ou ficheiros ignorados. Não mostra o detalhe de rejeições por linha que a API
+também devolve. Um pedido HTTP concluído com sucesso não significa que todos os
+ficheiros foram aceites: é necessário interpretar importados, ignorados e erros.
+
+3.3. Configuração CORS
+---------------------
+Ficheiro: backend/app.py
+
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": [
+                "http://127.0.0.1:5173",
+                "http://localhost:5173"
+            ]
+        }
+    })
+
+Comentário explicativo:
+Frontend e backend utilizam portas diferentes e, por isso, origens diferentes
+para o navegador. Flask-CORS configura as respostas que permitem os pedidos
+das origens indicadas. CORS não substitui autenticação nem autorização.
+
+
+4. PROCESSO ETL
+==============
+
+4.1. Extração do CSV
+-------------------
+Ficheiro: backend/csv_parser.py
+
+    conteudo = ficheiro.read().decode('utf-8-sig')
+    try:
+        separador = csv.Sniffer().sniff(conteudo[:4096], delimiters=',;').delimiter
+    except csv.Error:
+        separador = ','
+    leitor = csv.DictReader(io.StringIO(conteudo), delimiter=separador)
+
+Comentário explicativo:
+O ficheiro é lido para memória e descodificado como UTF-8, admitindo BOM.
+Sniffer tenta identificar vírgula ou ponto e vírgula nos primeiros caracteres.
+Se não conseguir, o código assume vírgula. DictReader associa cada valor ao nome
+da coluna. Não existe leitura de formatos Excel nesta implementação.
+
+    essenciais = {'timestamp_init_UTC', 'timestamp_end_UTC'}
+    if not essenciais.issubset(set(mapeamento.values())):
+        raise ValueError('Faltam timestamp_init_UTC ou timestamp_end_UTC')
+
+Comentário explicativo:
+Os dois campos UTC são indispensáveis no cabeçalho. Os campos temporais de
+Lisboa podem ser reconstruídos. O esquema interno suporta os dezanove campos
+descritos, mas não exige que todas as medições estejam presentes no CSV.
+
+4.2. Normalização e conversão numérica
+-------------------------------------
+Ficheiro: backend/csv_parser.py
+
+    def normalizar_cabecalho(nome):
+        # Ex.: "NO2(µg/m³)" -> "no2"; evita confundir PM1 e PM10.
+        return nome.strip().split('(')[0].strip().lower()
+
+Comentário explicativo:
+A função remove espaços exteriores e a unidade entre parênteses, convertendo
+o identificador para minúsculas. O dicionário ALIASES converte esse identificador
+para o nome interno exato. A correspondência evita confundir PM1 com PM10.
+
+    def numero(valor):
+        if valor is None or not str(valor).strip():
+            return None
+        n = float(str(valor).strip().replace(',', '.'))
+        if not math.isfinite(n):
+            raise ValueError('Número não finito')
+        return n
+
+Comentário explicativo:
+Campos vazios originam None, que sqlite3 guarda como NULL. Substituir a vírgula
+decimal permite converter números que a utilizem. NaN e infinitos são rejeitados.
+O código não substitui medições ausentes por zero, nem realiza imputação.
+
+4.3. Datas, fusos horários e coerência temporal
+---------------------------------------------
+Ficheiro: backend/csv_parser.py
+
+    def data_iso(valor):
+        if not valor or not str(valor).strip():
+            return None
+        data = datetime.fromisoformat(str(valor).strip().replace('Z', '+00:00'))
+        if data.tzinfo is None:
+            raise ValueError('Timestamp sem fuso horário')
+        return data
+
+Comentário explicativo:
+As datas têm de incluir informação de fuso horário. Z é convertido para a
+representação equivalente +00:00. Posteriormente, início e fim são normalizados
+em UTC e guardados com precisão de milissegundos.
+
+    zona = ZoneInfo('Europe/Lisbon')
+    for chave, instante in [('timestamp_init_Europe_Lisbon', inicio),
+                           ('timestamp_end_Europe_Lisbon', fim)]:
+        informado = data_iso(bruto.get(chave))
+        if informado and abs((informado - instante).total_seconds()) > 1:
+            raise ValueError(f'{chave} incoerente com UTC')
+        reg[chave] = instante.astimezone(zona).isoformat(timespec='milliseconds')
+
+Comentário explicativo:
+As datas locais são recalculadas com as regras Europe/Lisbon. Se o CSV incluir
+um instante local divergente do UTC em mais de um segundo, a linha é rejeitada.
+A comparação verifica o instante representado; o valor guardado é sempre o
+resultado da conversão para Lisboa.
+
+4.4. Validações, duplicados e linhas rejeitadas
+---------------------------------------------
+Ficheiro: backend/csv_parser.py
+
+    if reg['latitude'] is not None and not -90 <= reg['latitude'] <= 90:
+        raise ValueError('Latitude fora do intervalo')
+    if reg['longitude'] is not None and not -180 <= reg['longitude'] <= 180:
+        raise ValueError('Longitude fora do intervalo')
+    if reg['relativeHumidity'] is not None and not 0 <= reg['relativeHumidity'] <= 100:
+        raise ValueError('Humidade fora do intervalo')
+
+Comentário explicativo:
+São verificados os limites de coordenadas e humidade. Também são rejeitados
+intervalos cujo fim não seja posterior ao início e valores negativos nos
+poluentes, velocidade do vento e rajada. Estas regras não constituem calibração
+dos sensores nem uma validação científica completa das medições.
+
+    chave = (reg['timestamp_init_UTC'], reg['timestamp_end_UTC'])
+    if chave in vistos:
+        raise ValueError('Intervalo duplicado no mesmo ficheiro')
+    vistos.add(chave)
+    leituras.append(reg)
+
+Comentário explicativo:
+O conjunto vistos permite detetar intervalos repetidos dentro do mesmo ficheiro.
+A proteção entre ficheiros é complementada pela restrição UNIQUE no SQLite.
+
+    except (ValueError, TypeError) as erro:
+        rejeitadas.append({'linha': linha_n, 'motivo': str(erro)})
+
+Comentário explicativo:
+Estes erros de uma linha são registados e o processamento prossegue. Erros
+globais, como ausência de cabeçalhos essenciais ou descodificação inválida,
+podem impedir o processamento do ficheiro. Não se deve afirmar que qualquer
+erro possível é recuperado por este bloco.
+
+4.5. Carga transacional e identificação do sensor
+------------------------------------------------
+Ficheiro: backend/app.py
+
+    nome_sensor = Path(nome).stem
+    reg = db.execute('SELECT sensor_id FROM sensores WHERE nome=?', (nome_sensor,)).fetchone()
+
+Comentário explicativo:
+Na ausência de sensor_id explícito no formulário, o nome do sensor é derivado
+do nome do ficheiro sem a extensão. O identificador inteiro é gerado pelo
+SQLite. Ficheiros com nomes diferentes não são automaticamente reconhecidos
+como pertencentes ao mesmo sensor físico.
+
+Dentro do contexto transacional, o código regista o ficheiro e insere as leituras:
+
+    fid = db.execute('INSERT INTO ficheiros(nome,sensor_id) VALUES (?,?)', (nome, sensor_id)).lastrowid
+    colunas = ('sensor_id', 'ficheiro_id', *CAMPOS)
+    campos_sql = ', '.join('"'+c+'"' for c in colunas)
+    marcadores = ', '.join('?' for _ in colunas)
+    db.executemany(f'INSERT INTO leituras ({campos_sql}) VALUES ({marcadores})',
+                   [(sensor_id, fid, *[r[c] for c in CAMPOS]) for r in transformadas])
+
+Comentário explicativo:
+fid relaciona cada leitura com a importação de origem. Os nomes das colunas
+provêm de constantes internas e os valores são enviados através de parâmetros.
+executemany aplica a inserção às leituras transformadas.
+
+O bloco with ligar() as db confirma a transação na saída normal e reverte-a
+se uma exceção escapar do bloco. A transação abrange um ficheiro, não todo o
+lote de ficheiros enviados. Uma falha pode, por isso, deixar outros ficheiros
+do mesmo pedido corretamente importados. Um conflito de unicidade na carga
+reverte a carga desse ficheiro, em vez de ignorar apenas a leitura em conflito.
+
+Antes da inserção, o sistema consulta o nome na tabela ficheiros e ignora nomes
+já registados. Esta regra não compara o conteúdo através de um hash.
+
+    importados.append({'nome': nome, 'sensor_id': sensor_id, 'leituras': len(transformadas), 'rejeitadas': rejeitadas[:20], 'total_rejeitadas': len(rejeitadas)})
+
+Comentário explicativo:
+A resposta inclui o número de leituras aceites, a quantidade total de rejeições
+e até vinte detalhes de linhas rejeitadas. Estes detalhes não são persistidos
+numa tabela de auditoria pelo código analisado.
+
+4.6. Testes existentes e informação pendente
+-------------------------------------------
+Ficheiro: backend/test_etl.py
+
+    dados, erros = extrair_transformar(
+        io.BytesIO((CABECALHO + LINHA).encode())
+    )
+
+    self.assertEqual(len(dados), 1)
+
+Comentário explicativo:
+Este excerto do teste test_exemplo constrói um CSV em memória e verifica a
+quantidade de leituras aceites. O mesmo teste verifica valores de CO, PM2P5 e
+pressão, a ausência de rejeições e o timestamp final normalizado. Existe também
+test_intervalo_duplicado, que fornece duas linhas iguais e verifica uma aceitação
+e uma rejeição. Estes testes não exercitam diretamente a API ou a carga SQLite.
+
+Não foram executados testes para produzir este documento. Resultados de execução,
+medições de desempenho e avaliações de usabilidade: \textbf{[INFORMAÇÃO A COMPLETAR]}.
+
+A unidade da pressão na origem permanece por confirmar:
+\textbf{[INFORMAÇÃO A COMPLETAR]}.
+O parser não efetua conversão dessa unidade, mas WeatherMetrics.vue apresenta
+hPa. Esta discrepância deve ser resolvida antes de sustentar essa unidade no relatório.
+
+Evoluções possíveis, não apresentadas como implementadas: exibição das rejeições
+por linha na interface; seleção explícita do sensor na importação; paginação e
+filtragem temporal na API; autenticação; recolha automática de novas medições;
+validação de um índice oficial aplicável; testes de integração e de interface.
+
+Este documento foi acrescentado como material de apoio. O modelo LaTeX do IPBeja
+e o código-fonte da aplicação foram preservados.

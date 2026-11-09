@@ -1,0 +1,484 @@
+COMPONENTES VUE.JS E INTEGRAÇÃO DA INTERFACE
+==========================================
+
+1. ÂMBITO DO DOCUMENTO
+---------------------
+Este documento explica individualmente os componentes Vue.js existentes no
+projeto e a forma como são reunidos em App.vue. A descrição baseia-se na leitura
+dos ficheiros src/App.vue, src/components/*.vue, src/main.js e src/services/*.js.
+Os caminhos apresentados são relativos à pasta da aplicação.
+
+Os excertos reproduzem segmentos reais do código. As explicações foram
+acrescentadas apenas neste documento. Não foram alterados os componentes nem
+executados testes para elaborar esta descrição.
+
+A interface apresenta dados históricos importados. Uma atualização reativa da
+interface não representa recolha de novas medições em tempo real. O AQI utilizado
+é demonstrativo e não deve ser confundido com um índice oficial português.
+
+
+2. ORGANIZAÇÃO DOS FICHEIROS VUE
+-------------------------------
+Os ficheiros .vue são componentes de ficheiro único. Neste projeto utilizam:
+
+- <template>: estrutura visual, propriedades ligadas ao estado e eventos;
+- <script setup>: lógica JavaScript com a Composition API do Vue 3;
+- <style>: regras CSS, quando necessárias. O atributo scoped limita o âmbito
+  das regras aos elementos do componente.
+
+Os elementos centrais utilizados são:
+- ref: valores reativos, acedidos com .value no JavaScript;
+- computed: valores derivados, recalculados em função das dependências;
+- watch: execução de uma reação quando um valor observado muda;
+- defineProps: declaração dos dados recebidos do componente pai;
+- defineEmits: declaração dos eventos emitidos para o componente pai;
+- onMounted e onBeforeUnmount: inicialização e limpeza ligadas ao ciclo de vida.
+
+No template, o Vue permite utilizar diretamente as referências sem escrever
+.value. O prefixo : liga um atributo a uma expressão JavaScript e @ associa um
+evento a uma expressão ou função. v-if condiciona a apresentação; v-for repete
+elementos; v-model estabelece a ligação entre um controlo e o estado associado.
+
+
+3. MAIN.JS: PONTO DE ENTRADA
+--------------------------
+Ficheiro: src/main.js
+
+    import { createApp } from 'vue'
+    import 'bootstrap/dist/css/bootstrap.min.css'
+    import 'bootstrap-icons/font/bootstrap-icons.css'
+    import App from './App.vue'
+    createApp(App).mount('#app')
+
+createApp cria a aplicação a partir de App.vue. mount associa essa aplicação ao
+elemento HTML com o identificador app. Os imports disponibilizam os estilos do
+Bootstrap e dos seus ícones. Não existe neste ficheiro uma configuração de rotas
+ou de uma biblioteca externa de gestão de estado.
+
+
+4. APP.VUE: COMPONENTE PRINCIPAL
+-------------------------------
+Ficheiro: src/App.vue
+
+4.1. Responsabilidade
+App.vue compõe a página e coordena os oito componentes filhos. Mantém os dados
+recebidos da API e os valores que representam as escolhas do utilizador. Também
+executa as operações de carregamento, importação e eliminação.
+
+4.2. Estado
+    const leituras = ref([])
+    const sensores = ref([])
+    const sensorSelecionado = ref('todos')
+    const indiceAtivo = ref(0)
+    const poluenteSelecionado = ref('PM2P5')
+    const erro = ref('')
+    const sucesso = ref('')
+
+leituras e sensores guardam os resultados da API. sensorSelecionado determina a
+série consultada. indiceAtivo identifica uma posição nessa série. O poluente
+selecionado controla o gráfico. erro e sucesso fornecem mensagens à interface.
+O estado é local ao componente principal; os filhos não consultam diretamente
+a base de dados.
+
+4.3. Carregamento inicial
+    async function carregarDados() {
+      try {
+        ;[sensores.value, leituras.value] = await Promise.all([airService.getSensores(), airService.getLeituras()])
+      } catch { erro.value = 'Não foi possível contactar o servidor Flask.' }
+    }
+    onMounted(carregarDados)
+
+O carregamento ocorre quando App.vue é montado. Os dois pedidos são aguardados
+em conjunto com Promise.all. O ponto e vírgula inicial protege a atribuição por
+desestruturação das regras de inserção automática de ponto e vírgula do JavaScript.
+Não existe um temporizador que procure novas leituras periodicamente.
+
+4.4. Dados derivados
+    const leiturasFiltradas = computed(() => sensorSelecionado.value === 'todos'
+      ? leituras.value : leituras.value.filter(l => Number(l.sensor_id) === Number(sensorSelecionado.value)))
+    const leituraAtual = computed(() => leiturasFiltradas.value[indiceAtivo.value] || {})
+    watch(sensorSelecionado, () => { indiceAtivo.value = 0 })
+
+O filtro é aplicado no navegador aos dados carregados. A leitura atual é obtida
+pelo índice selecionado. Mudar de sensor repõe o índice em zero. Esta seleção
+não calcula médias entre sensores e não implica que os seus registos sejam
+temporalmente coincidentes.
+
+App.vue calcula ainda aqiAtual, dadosGrafico e dadosMapa. Estes valores são
+distribuídos pelos componentes que os apresentam. A gestão do estado num único
+local evita que cada cartão mantenha uma seleção temporal independente.
+
+4.5. Apresentação condicional e ações
+O cabeçalho está sempre presente. O botão de eliminação aparece quando existem
+leituras. Quando a série filtrada está vazia, apresenta-se uma mensagem; os
+componentes de análise são apresentados no ramo v-else. Esta mensagem é genérica
+e não distingue todos os possíveis motivos de uma série vazia.
+
+uploadFicheiro recebe o evento do input, envia os ficheiros por airService,
+recarrega os dados e apresenta o número de ficheiros importados. Os detalhes
+das linhas rejeitadas devolvidos pela API não são apresentados nesta interface.
+
+limparDados solicita confirmação com window.confirm, chama o serviço de
+eliminação, repõe a seleção em todos e o índice em zero e recarrega os dados.
+A confirmação no navegador não é autenticação ou autorização do backend.
+
+Os estilos de App.vue não usam scoped: incluem regras globais para body,
+.cyber-card, h6 e .form-select, utilizadas na apresentação dos componentes.
+
+
+5. TOPHEADER.VUE: CABEÇALHO, SENSOR E IMPORTAÇÃO
+-----------------------------------------------
+Ficheiro: src/components/TopHeader.vue
+
+Responsabilidade: apresentar o título, a lista de sensores e o controlo para
+selecionar um ou vários ficheiros CSV.
+
+Propriedades recebidas:
+- sensores: Array, com valor inicial vazio;
+- modelValue: String ou Number, com valor inicial 'todos'.
+
+Eventos emitidos:
+- update:modelValue: nova seleção do sensor;
+- upload: evento de seleção dos ficheiros.
+
+    defineProps({ sensores: { type: Array, default: () => [] }, modelValue: { type: [String, Number], default: 'todos' } })
+    defineEmits(['update:modelValue', 'upload'])
+
+A seleção converte o identificador numérico com Number e conserva a string
+todos para a opção global. O componente emite a escolha; a filtragem ocorre
+em App.vue. O input tem accept=".csv" e multiple, mas a validação efetiva do
+ficheiro é também realizada no servidor. TopHeader não executa pedidos HTTP.
+
+Ligação no componente pai:
+    <TopHeader v-model="sensorSelecionado" :sensores="sensores" @upload="uploadFicheiro" />
+
+O v-model deste componente utiliza a propriedade modelValue e o evento
+update:modelValue. O evento upload é tratado pela função uploadFicheiro do pai.
+
+
+6. TIMESLIDER.VUE: NAVEGAÇÃO TEMPORAL
+------------------------------------
+Ficheiro: src/components/TimeSlider.vue
+
+Responsabilidade: selecionar uma leitura por posição e mostrar as datas atual,
+inicial e final. Inclui botões anterior/seguinte e uma pequena linha SVG de PM2,5.
+
+Propriedades recebidas:
+- modelValue: Number, índice atual;
+- total: Number, quantidade de leituras;
+- leituras: Array, série filtrada.
+
+Evento emitido: update:modelValue, com o novo índice.
+
+    const dataAtual=computed(()=>dataLegivel(props.leituras[props.modelValue]?.data))
+    const primeiraData=computed(()=>dataLegivel(props.leituras[0]?.data))
+    const ultimaData=computed(()=>dataLegivel(props.leituras.at(-1)?.data))
+
+As datas são obtidas da propriedade data das leituras e formatadas com
+toLocaleString('pt-PT'). Não é fixado explicitamente um timeZone no formatador;
+a apresentação acompanha o fuso do navegador, mesmo que a string tenha um
+deslocamento de Lisboa. Os botões são desativados nas extremidades da série.
+
+Ligação no pai:
+    <TimeSlider v-model="indiceAtivo" :total="leiturasFiltradas.length" :leituras="leiturasFiltradas" />
+
+Alterar o índice atualiza leituraAtual e, consequentemente, os cartões e o
+instante de referência do mapa. O gráfico histórico continua a receber a série
+completa filtrada; não é reduzido automaticamente pelo slider.
+
+A barra percorre índices, não durações proporcionais nem um intervalo entre
+duas datas. Na pequena linha SVG, valores PM2,5 ausentes são excluídos do cálculo
+da escala, mas o traçado usa uma posição vertical de substituição (36). Assim,
+essa linha não representa lacunas da mesma forma que o gráfico Chart.js.
+
+
+7. WEATHERMETRICS.VUE: INDICADORES METEOROLÓGICOS
+------------------------------------------------
+Ficheiro: src/components/WeatherMetrics.vue
+
+Responsabilidade: apresentar quatro cartões relativos à leitura selecionada.
+Recebe a propriedade leitura, de tipo Object, e não declara eventos.
+
+    const itens = [
+      { chave: 'temperature', nome: 'Temperatura', unidade: '°C' },
+      { chave: 'relativeHumidity', nome: 'Humidade', unidade: '%' },
+      { chave: 'windSpeed', nome: 'Vento', unidade: 'm/s' },
+      { chave: 'pressure', nome: 'Pressão', unidade: 'hPa' }
+    ]
+
+O template percorre itens com v-for, consulta leitura[item.chave] e apresenta
+uma casa decimal. Valores nulos são apresentados como N/D. As classes col-6 e
+col-lg-3 organizam os cartões em duas ou quatro colunas conforme a largura.
+
+Ligação no pai: <WeatherMetrics :leitura="leituraAtual" />
+
+Limitação: hPa é a unidade escrita na interface, mas a confirmação da unidade
+do campo de pressão na origem continua pendente:
+\textbf{[INFORMAÇÃO A COMPLETAR]}.
+O componente não realiza uma conversão de pressão.
+
+
+8. WEATHERDETAILS.VUE: DETALHES DA LEITURA
+-----------------------------------------
+Ficheiro: src/components/WeatherDetails.vue
+
+Responsabilidade: apresentar a rajada, a direção do vento, o identificador do
+sensor e a data. Recebe leitura (Object) e não declara eventos.
+
+    <p class="mb-1">Rajada: {{ leitura.windGust ?? 'N/D' }} m/s · Direção: {{ leitura.windDirection ?? 'N/D' }}°</p>
+    <p class="mb-1">Sensor: {{ leitura.sensor_id ?? 'N/D' }}</p>
+    <p class="mb-0">Data: {{ leitura.data ?? 'N/D' }}</p>
+
+O operador ?? substitui apenas null ou undefined, preservando zero como valor
+válido. A data é apresentada tal como recebida, sem a formatação de TimeSlider.
+O componente complementa WeatherMetrics; ambos recebem a mesma leituraAtual.
+
+Ligação no pai: <WeatherDetails :leitura="leituraAtual" />
+
+
+9. POLLUTANTLIST.VUE: CONCENTRAÇÕES E REFERÊNCIAS
+-----------------------------------------------
+Ficheiro: src/components/PollutantList.vue
+
+Responsabilidade: apresentar PM2,5, PM10, NO2, O3, SO2 e CO da leitura atual,
+acompanhados de barras proporcionais a referências fixas. PM1 é armazenado no
+sistema, mas não integra esta lista nem a seleção de poluentes do gráfico.
+
+Recebe leitura (Object) e não declara eventos.
+
+    function formatar(valor,id) { return valor == null || !Number.isFinite(Number(valor)) ? 'N/D' : Number(valor).toFixed(id === 'CO' ? 3 : 1) }
+    function percentagem(pol) { const n = Number(props.leitura[pol.id]); return props.leitura[pol.id] == null || !Number.isFinite(n) ? 0 : Math.max(0,Math.min(100,n / pol.referencia * 100)) }
+    function corBarra(pol) { const p=percentagem(pol);return p>90?'bg-danger':p>70?'bg-warning':'bg-info' }
+
+formatar apresenta três casas decimais para CO e uma para os restantes valores.
+percentagem limita a largura da barra ao intervalo de 0 a 100. Valores acima
+da referência continuam, por isso, a ocupar no máximo toda a barra. corBarra
+escolhe uma classe visual em função dessa percentagem.
+
+As referências têm períodos distintos, como anual, diário ou horário. O código
+não calcula aqui essas médias. O texto do componente esclarece que as barras
+não demonstram incumprimento legal. A sua cor também não é o AQI.
+
+Ligação no pai: <PollutantList :leitura="leituraAtual" />
+
+
+10. AQIGAUGECARD.VUE: INDICADOR DO AQI DEMONSTRATIVO
+---------------------------------------------------
+Ficheiro: src/components/AqiGaugeCard.vue
+
+Responsabilidade: desenhar um indicador semicircular SVG para o índice recebido.
+Recebe aqi (Number), com valor inicial null, e não declara eventos.
+
+    const offset=computed(()=>235.6*(1-Math.min(Math.max(props.aqi??0,0),500)/500))
+
+    const cor=computed(()=>props.aqi==null?'#64748b':props.aqi<=50?'#00e676':props.aqi<=100?'#ffea00':props.aqi<=150?'#ff7e00':props.aqi<=200?'#ff1744':'#b026ff')
+
+offset determina a parte visível do arco através de stroke-dashoffset. O valor
+é limitado entre 0 e 500 para o desenho. cor determina a cor a partir de faixas.
+O texto numérico usa aqi ?? '--'. O componente apresenta uma mensagem diferente
+quando o índice não está disponível.
+
+O indicador não calcula a média ou o índice. App.vue fornece aqiAtual, calculado
+com calcularAqiIntervalo do serviço aqi.js. O cálculo exige cobertura contínua
+de 24 horas e assume que cada concentração representa a média do seu intervalo.
+NaN, valores negativos, intervalos inválidos, lacunas ou sobreposições impedem
+um resultado válido conforme as verificações do serviço.
+
+Ligação no pai: <AqiGaugeCard :aqi="aqiAtual" />
+
+O índice é demonstrativo. A fonte e validação das faixas não estão comprovadas
+por este documento: \textbf{[INFORMAÇÃO A COMPLETAR]}.
+
+
+11. AQIMAP.VUE: MAPA DOS SENSORES
+--------------------------------
+Ficheiro: src/components/AqiMap.vue
+
+Responsabilidade: gerir o mapa Leaflet e os marcadores. Recebe sensoresDados
+(Array) e não declara eventos para App.vue. As interações do mapa são locais
+ao Leaflet; clicar num marcador não altera o sensor selecionado no cabeçalho.
+
+App.vue envia objetos com id, lat, lng e aqi. O nome sensores-dados usado no
+template corresponde à propriedade sensoresDados declarada em JavaScript.
+
+    const conteudo = document.createElement('div')
+    conteudo.textContent = `${sensor.id} · AQI: ${sensor.aqi ?? 'N/D'}`
+    L.circleMarker([sensor.lat, sensor.lng], { radius: 12, color: '#fff', weight: 2, fillColor: cor(sensor.aqi), fillOpacity: .85 })
+      .bindPopup(conteudo).addTo(camada)
+
+O marcador só é criado quando as coordenadas são números finitos. O popup usa
+textContent, evitando interpretar o seu conteúdo como HTML. O mapa usa cores
+por AQI e cinzento quando o índice é nulo.
+
+onMounted cria o mapa, define uma vista inicial em Beja e adiciona mosaicos
+OpenStreetMap e uma camada de marcadores. nextTick aguarda a atualização do DOM
+antes de recalcular o tamanho do mapa.
+
+    watch(() => props.sensoresDados, desenhar, { deep: true })
+    onBeforeUnmount(() => { map?.remove(); map = null })
+
+Quando os dados mudam, desenhar limpa e recria os marcadores e ajusta a vista
+com fitBounds. Ao desmontar, remove a instância Leaflet. Esta limpeza é
+relevante porque o ramo condicional de App.vue pode remover o componente.
+
+Ligação no pai: <AqiMap :sensores-dados="dadosMapa" />
+
+App.vue prepara dadosMapa escolhendo, para cada sensor, a leitura mais recente
+até ao instante inicial da leitura atual, e as últimas coordenadas válidas até
+esse instante. O mapa continua a considerar todos os sensores disponíveis,
+mesmo quando o cabeçalho seleciona apenas um. Os marcadores podem ter leituras
+de instantes distintos e coordenadas provenientes de um registo anterior.
+O AQI de cada marcador é calculado para o fim da leitura desse sensor.
+
+O mapa base depende do acesso ao serviço externo de mosaicos. Não existe
+interpolação espacial da poluição entre sensores.
+
+
+12. AQIEVOLUTIONCHART.VUE: EVOLUÇÃO DAS CONCENTRAÇÕES
+---------------------------------------------------
+Ficheiro: src/components/AqiEvolutionChart.vue
+
+Responsabilidade: apresentar um gráfico de linhas através de vue-chartjs e
+Chart.js. Apesar do nome do ficheiro, a série contém concentrações do poluente
+selecionado, não valores históricos do AQI.
+
+Propriedades:
+- dadosHistoricos: Array de pontos { x, y };
+- poluente: String, inicialmente PM2P5.
+
+Não declara eventos. A seleção do poluente encontra-se em App.vue.
+
+    import { Line } from 'vue-chartjs'
+    import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler } from 'chart.js'
+    ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
+
+O componente regista as funcionalidades necessárias à representação. computed
+prepara labels, dataset e opções a partir das propriedades. Os tooltips usam
+mg/m³ para CO e µg/m³ para os restantes poluentes disponíveis. spanGaps:false
+evita unir valores nulos; não deteta automaticamente períodos sem registos
+quando não existem pontos explícitos para esses períodos.
+
+O eixo horizontal utiliza CategoryScale e datas formatadas sem horas. Os pontos
+estão espaçados por categoria, não pela duração real entre medições. A série tem
+suavização visual e preenchimento; não corresponde a uma previsão.
+
+Ligação no pai:
+    <AqiEvolutionChart :dados-historicos="dadosGrafico" :poluente="poluenteSelecionado" />
+
+    const dadosGrafico = computed(() => leiturasFiltradas.value.map(l => ({
+      x: l.data, y: l[poluenteSelecionado.value]
+    })))
+
+Ao mudar de poluente ou sensor, o pai prepara novos pontos e o gráfico acompanha
+a alteração. Com todos os sensores selecionados, os registos integram uma única
+série, sem separação por sensor. As faixas mostradas abaixo do gráfico são
+ilustrações do AQI, conforme o aviso apresentado, e não faixas da concentração.
+
+
+13. SERVIÇOS AUXILIARES UTILIZADOS PELO VUE
+------------------------------------------
+13.1. src/services/airService.js
+Centraliza os pedidos Axios para http://localhost:5000/api. Disponibiliza
+getSensores, getLeituras, uploadCSV e limparDados. O upload utiliza FormData,
+com cada ficheiro associado ao campo ficheiros. App.vue é o único componente
+analisado que chama este serviço; os componentes filhos recebem propriedades.
+
+13.2. src/services/aqi.js
+Disponibiliza calcularAqiIntervalo e calcularAqiPm25. A primeira seleciona
+intervalos do sensor, verifica continuidade e calcula uma média ponderada pela
+duração numa janela de 24 horas. A segunda trunca a concentração e calcula o
+índice por interpolação numa faixa demonstrativa. Estes serviços são módulos
+JavaScript, não componentes Vue.
+
+App.vue mantém também a função aqiNoInstante, sem chamadas identificadas. Essa
+função referencia calcularAqiPm25 sem a importar. O percurso ativo utiliza
+calcularAqiIntervalo; a função antiga não deve ser confundida com esse percurso.
+
+
+14. JUNÇÃO DOS COMPONENTES
+--------------------------
+Árvore de composição:
+
+    main.js
+      |
+      +-- App.vue
+            +-- TopHeader.vue
+            +-- TimeSlider.vue
+            +-- WeatherMetrics.vue
+            +-- AqiGaugeCard.vue
+            +-- PollutantList.vue
+            +-- AqiMap.vue
+            +-- AqiEvolutionChart.vue
+            +-- WeatherDetails.vue
+
+Distribuição do estado:
+
+    sensores --------------------------> TopHeader
+    sensorSelecionado <--- v-model ----> TopHeader
+    indiceAtivo <--------- v-model ----> TimeSlider
+    leiturasFiltradas -----------------> TimeSlider
+    leituraAtual ----------------------> WeatherMetrics
+                                       WeatherDetails
+                                       PollutantList
+    aqiAtual --------------------------> AqiGaugeCard
+    dadosMapa -------------------------> AqiMap
+    dadosGrafico + poluenteSelecionado -> AqiEvolutionChart
+
+O fluxo principal desce através de propriedades. As escolhas de sensor e índice
+sobem através de update:modelValue. O evento upload sobe até ao pai, que coordena
+o pedido HTTP. Não existe troca direta de dados entre componentes irmãos.
+
+Embora se use v-model, os filhos não alteram diretamente as propriedades:
+emitem uma proposta de atualização que o pai aplica ao seu estado.
+
+
+15. EFEITO DAS PRINCIPAIS INTERAÇÕES
+-----------------------------------
+15.1. Abrir a aplicação
+App.vue carrega sensores e leituras. O estado inicial seleciona todos os
+sensores, o primeiro registo e PM2P5. Os componentes recebem os dados derivados.
+
+15.2. Selecionar um sensor
+TopHeader emite update:modelValue. O pai altera sensorSelecionado, filtra a
+série e repõe o índice inicial. Atualizam-se a leitura, os indicadores e o
+gráfico. O mapa conserva os sensores com dados até ao novo instante de referência.
+
+15.3. Mover o slider
+TimeSlider emite um novo índice. Os cartões passam a representar outra leitura
+e o mapa usa outro instante de referência. A série completa do gráfico e a
+lista dos sensores não são recarregadas da API por esta ação.
+
+15.4. Selecionar outro poluente
+O select de App.vue altera poluenteSelecionado e recalcula dadosGrafico. Esta
+ação não muda o AQI, que continua baseado em PM2,5, nem a leitura dos cartões.
+
+15.5. Importar ficheiros
+TopHeader emite upload. App.vue envia os ficheiros para a API e volta a carregar
+sensores e leituras. As mensagens são construídas a partir de importados,
+ignorados e erros. O código não repõe explicitamente indiceAtivo nesta operação.
+
+15.6. Eliminar dados
+O botão de App.vue pede confirmação e chama a API. Após a eliminação e o
+recarregamento, os dados ficam vazios e os componentes do ramo v-else são
+desmontados. A limpeza do mapa é executada no seu onBeforeUnmount.
+
+
+16. INTERPRETAÇÃO EM ENGENHARIA DE SOFTWARE
+------------------------------------------
+A composição permite separar controlos, indicadores, gráfico e mapa em unidades
+com interfaces explícitas. Propriedades e eventos documentam os pontos de ligação.
+As funções computed evitam manter cópias independentes de dados derivados, e o
+serviço Axios concentra o contrato HTTP fora dos componentes de apresentação.
+
+App.vue acumula a coordenação do estado, importação, eliminação e preparação de
+dados para as visualizações. Uma eventual extração dessa lógica para composables
+seria trabalho futuro, não uma característica da implementação atual.
+
+Também seriam evoluções possíveis: apresentação das rejeições por linha,
+separação de séries por sensor, indicação do instante de cada marcador, formatação
+temporal com fuso explícito e tratamento visual uniforme dos valores ausentes.
+Estas propostas não foram implementadas ao produzir o documento.
+
+Não se apresentam resultados de usabilidade, compatibilidade ou desempenho.
+Caso sejam necessários no relatório, devem ser sustentados por avaliações reais:
+\textbf{[INFORMAÇÃO A COMPLETAR]}.
